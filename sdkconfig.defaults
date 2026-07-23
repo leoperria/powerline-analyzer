@@ -1,0 +1,10 @@
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Keep the ESP-IDF console/log output OFF the USB Serial/JTAG peripheral so that
+# log text is never injected into the binary ADC data stream. Route it to UART0.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_NUM_0=y
+# Explicitly make sure the secondary console is not USB Serial/JTAG either.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
