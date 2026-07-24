@@ -33,7 +33,7 @@
 
 /* ------------------------------ configuration ---------------------------- */
 #define ADC_UNIT_SEL        ADC_UNIT_1          /* Use ADC1 (ADC2 conflicts with Wi-Fi). */
-#define ADC_CHANNEL_SEL     ADC_CHANNEL_3       /* GPIO3 on ESP32-C3. Avoid strapping pins GPIO2/8/9. */
+#define ADC_CHANNEL_SEL     +   -       /* GPIO3 on ESP32-C3. Avoid strapping pins GPIO2/8/9. */
 #define ADC_ATTEN_SEL       ADC_ATTEN_DB_12     /* ~0..3.1 V full scale. */
 #define ADC_BITWIDTH_SEL    ADC_BITWIDTH_12     /* ESP32-C3 SAR ADC is 12-bit. */
 
