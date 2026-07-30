@@ -8,6 +8,7 @@
 ## (e.g. src/cmake-build-debug/.../CompilerIdC/CMakeCCompilerId.c).
 set(app_sources
         "main.c"
+        "adc_setup.c"
 )
 
 idf_component_register(

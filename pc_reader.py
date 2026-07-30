@@ -29,14 +29,27 @@ seconds. Cumulative counters (samples, losses, connected time) survive across
 reconnects; the per-connect warmup is repeated each time so the reported rate
 is not polluted by post-reconnect buffer backlogs.
 
-Optionally writes every sample to a CSV (one 12-bit value per line) and/or a
-16-bit PCM mono WAV file. The WAV sample rate is not hard-coded: it is
+Optionally writes every sample to a CSV (one millivolt value per line) and/or
+a 16-bit PCM mono WAV file. The WAV sample rate is not hard-coded: it is
 *learned* from the mean of the per-second effective-rate reports emitted
 during the run (so a device actually running at, say, 43987 Hz will produce
 a WAV that plays back at real-time speed).
+
+Samples arrive already converted to millivolts of the *instantaneous mains
+voltage* (not the raw ADC pin voltage). The device inverts its sensing
+front-end's fixed gain and DC bias (transformer + RC filter + bias network)
+to recover the mains waveform, streaming signed 32-bit millivolt values with
+an expected range of roughly -339400..+339400 mV at a 240 Vrms max mains
+input.
+
+The once-per-second status line includes the RMS mains voltage (Vrms),
+computed on the host from the actual sample values received since the
+previous report (sqrt(mean(sample^2))). This is a live sanity check against
+a trusted multimeter reading of the same outlet.
 """
 
 import argparse
+import math
 import struct
 import sys
 import time
@@ -52,6 +65,10 @@ HDR = struct.Struct("<IHH")      # seq(uint32), ovf(uint16), count(uint16)  -- a
 MAX_COUNT = 4096                 # sanity ceiling for a frame's sample count
 EXPECTED_COUNT = 256             # firmware SAMPLES_PER_FRAME -- any deviation is a red flag
 
+# Samples arrive as reconstructed instantaneous mains voltage, in millivolts
+# (signed int32), not raw ADC codes and not raw ADC-pin millivolts.
+MAINS_MV_PEAK = 339400           # expected peak magnitude at a 240 Vrms max mains input
+
 # ---- reconnect / stall behaviour -------------------------------------------
 RECONNECT_TIMEOUT_S = 60.0       # give up after this long trying to reopen the port
 RECONNECT_INTERVAL_S = 0.5       # poll interval while waiting for device to come back
@@ -61,6 +78,21 @@ WARMUP_FRAMES = 40               # drop this many frames after each (re)connect
 
 class Disconnected(Exception):
     """Raised when the USB CDC link errors out or stops delivering bytes."""
+
+
+_PCM_SCALE = 32767.0 / MAINS_MV_PEAK
+
+
+def mv_to_pcm16(s):
+    """Convert a signed mains-millivolt sample (~-339400..+339400) to signed
+    16-bit PCM.
+
+    Already centered at 0 (it's an AC waveform), just scaled to fill
+    [-32768..32767]. Clamped because transient spikes/noise can occasionally
+    exceed the nominal peak.
+    """
+    v = int(round(s * _PCM_SCALE))
+    return max(-32768, min(32767, v))
 
 
 # ---- low-level I/O ---------------------------------------------------------
@@ -140,7 +172,7 @@ def main():
         "csv",
         nargs="?",
         default=None,
-        help="Optional CSV output path (one 12-bit sample per line).",
+        help="Optional CSV output path (one millivolt sample per line).",
     )
     parser.add_argument(
         "--wav",
@@ -177,6 +209,7 @@ def main():
     disconnects = 0
     cum_samples = 0                # samples counted across all connected segments
     cum_time = 0.0                 # seconds we've spent actually connected & post-warmup
+    cum_sum_sq = 0.0                # sum of sample^2 across the whole run (for overall Vrms)
 
     # ---- per-segment state (reset on each connect) ----
     segment_t0 = None
@@ -202,6 +235,8 @@ def main():
             segment_samples = 0
             segment_t0 = None
             t_report = None
+            rms_sum_sq = 0.0     # sum of sample^2 since the last per-second report
+            rms_count = 0        # sample count since the last per-second report
 
             try:
                 resync(ser)
@@ -216,8 +251,8 @@ def main():
                         expected_seq = None
                         continue
 
-                    payload = read_exact(ser, count * 2)
-                    samples = struct.unpack(f"<{count}H", payload)
+                    payload = read_exact(ser, count * 4)
+                    samples = struct.unpack(f"<{count}i", payload)
 
                     # The next 2 bytes must be the next magic word; if not, re-sync.
                     nxt = read_exact(ser, 2)
@@ -276,17 +311,21 @@ def main():
                     segment_samples += count
                     frames_counted += 1
                     last_seq = seq
+                    for s in samples:
+                        sq = float(s) * float(s)
+                        rms_sum_sq += sq
+                        cum_sum_sq += sq
+                    rms_count += count
                     if csv:
                         csv.write("\n".join(str(s) for s in samples))
                         csv.write("\n")
                     if wav_pcm is not None:
-                        # 12-bit unsigned (0..4095) -> 16-bit signed PCM.
-                        # Center at midscale (2048) and scale up by 16 to fill
-                        # the 16-bit range: [-32768 .. +32752].
+                        # Samples are mains millivolts (signed, ~-339400..+339400);
+                        # convert to centered, scaled 16-bit signed PCM.
                         wav_pcm.extend(
                             struct.pack(
                                 f"<{count}h",
-                                *((s - 2048) << 4 for s in samples),
+                                *(mv_to_pcm16(s) for s in samples),
                             )
                         )
 
@@ -301,11 +340,15 @@ def main():
                             reported_rates.append(rate)
                         expected_frames = ((last_seq - first_seq) & 0xFFFFFFFF) + 1
                         lost = expected_frames - frames_counted
-                        print(f"  {cum_ns} samples, ~{rate:8.1f} Hz, "
+                        rms_mv = math.sqrt(rms_sum_sq / rms_count) if rms_count > 0 else 0.0
+                        rms_v = rms_mv / 1000.0
+                        print(f"  {cum_ns} samples, ~{rate:8.1f} Hz, Vrms={rms_v:7.2f} V, "
                               f"frame_gaps={frame_gaps}, device_overflows={capture_ovf}, "
                               f"short_frames={short_frames}, unaccounted={lost}, "
                               f"disconnects={disconnects}")
                         t_report = now
+                        rms_sum_sq = 0.0
+                        rms_count = 0
 
                     if need_resync:
                         resync(ser)
@@ -337,8 +380,9 @@ def main():
             pass
 
         rate = (cum_samples / cum_time) if cum_time > 0 else 0.0
+        overall_rms_v = (math.sqrt(cum_sum_sq / cum_samples) / 1000.0) if cum_samples > 0 else 0.0
         print(f"\nStopped. {cum_samples} samples in {cum_time:.1f}s connected "
-              f"(~{rate:.1f} Hz)")
+              f"(~{rate:.1f} Hz), overall Vrms={overall_rms_v:.2f} V")
         print(f"  disconnects={disconnects}, frame_gaps={frame_gaps}, "
               f"device_overflows={capture_ovf}, short_frames={short_frames}")
         # "no samples lost" only makes sense per-connected-window; a disconnect
