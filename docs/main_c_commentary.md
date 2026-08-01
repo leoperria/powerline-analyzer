@@ -55,7 +55,7 @@ and files, not line numbers, since those move around as the code evolves.
         3. ADC mV → reconstructed mains mV       (mains_filter_step)
         4. wrap in a frame (magic+seq+ovf+count) (wire_pack_header)
         ▼
-  usb_serial_jtag_write_bytes()  → PC (pc_reader.py)
+  usb_serial_jtag_write_bytes()  → PC (host/pc_reader.py)
 ```
 
 **Key idea:** the CPU is *not* in the sampling loop. Hardware + DMA sample at

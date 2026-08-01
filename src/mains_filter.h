@@ -30,13 +30,17 @@
  * CALIBRATION: the theoretical gain above is only as good as nominal
  * component values (resistor/cap tolerances on the divider/filter network
  * easily contribute a few percent of error). MAINS_CAL_FACTOR corrects that
- * residual error empirically -- multiply the theoretical inverse gain by
- * (true Vrms / measured Vrms), averaged over several trials to avoid chasing
- * mains drift and measurement noise (see docs/calibration_history.md for the
- * full trial-by-trial derivation of the current value). Re-derive it for
- * each physically distinct board/transformer, and again any time
- * MAINS_LPF_CUTOFF_HZ changes (a new cutoff attenuates the real waveform's
- * harmonics by a different amount, which is a new systematic shift). */
+ * residual error empirically, from a single reference point: with the current
+ * factor flashed, compare the device's reported Vrms against a multimeter and
+ * scale by (true Vrms / reported Vrms). The current value was set against a
+ * multimeter reading of 205 V while the device reported 204 V, so it is exact
+ * at ~205 V and drifts slightly at other grid voltages -- just repeat the
+ * measurement to recalibrate for the range you care about. See
+ * docs/calibration_history.md for the full trial-by-trial history.
+ * Re-derive it for each physically distinct board/transformer, and again any
+ * time MAINS_LPF_CUTOFF_HZ changes (a new cutoff attenuates the real
+ * waveform's harmonics by a different amount, which is a new systematic
+ * shift). */
 #pragma once
 
 #include <math.h>
@@ -45,7 +49,7 @@
 #include "board_config.h"    /* SAMPLE_RATE_HZ */
 
 #define MAINS_GAIN_VADC_PER_VIN   0.00359498f    /* Vadc_ac / Vmains_ac, dimensionless (theoretical, from component values) */
-#define MAINS_CAL_FACTOR          0.998611f      /* empirical correction, see docs/calibration_history.md */
+#define MAINS_CAL_FACTOR          1.006331f      /* empirical correction, see docs/calibration_history.md */
 #define MAINS_INV_GAIN            ((1.0f / MAINS_GAIN_VADC_PER_VIN) * MAINS_CAL_FACTOR) /* mV mains per mV of ADC AC swing, calibration-corrected */
 #define VADC_DC_BIAS_MV           1592.6f        /* ADC node's no-signal DC bias point, in mV -- theoretical value,
                                                      used only to SEED the adaptive tracker below; the actual bias

@@ -19,7 +19,7 @@ verifies, reports live RMS voltage, and records the stream to CSV and/or WAV.
   mains outlet ──▶ sensing front-end ──▶ ESP32-C3 SAR ADC (DMA, ~10 kHz, 12-bit)
                                               │  framed protocol (magic + seq + ovf + count + payload)
                                               ▼
-                                        native USB CDC ──▶ pc_reader.py ──▶ CSV / WAV + Vrms + integrity report
+                                        native USB CDC ──▶ host/pc_reader.py ──▶ CSV / WAV + Vrms + integrity report
 ```
 
 ### Firmware (`src/`, ESP-IDF v5.x)
@@ -44,11 +44,15 @@ verifies, reports live RMS voltage, and records the stream to CSV and/or WAV.
   layer), `mains_filter.h` (mains-voltage reconstruction math), `wire_protocol.h`
   (USB frame format), `main.c` (orchestration).
 
-### PC reader (`pc_reader.py`, Python + pyserial)
+### PC reader (`host/`, Python + pyserial)
 
 - Re-syncs on the magic word, parses each frame, and continuously reports the
-  effective sample rate, live RMS mains voltage, frame-sequence gaps, device
-  pool overflows during capture, short frames, and disconnects.
+  effective sample rate, live RMS mains voltage, mains frequency, frame-sequence
+  gaps, device pool overflows during capture, short frames, and disconnects.
+- Mains frequency comes from rising zero crossings, linearly interpolated
+  between the two samples that straddle each crossing (so resolution is not
+  limited to one sample period) and guarded by hysteresis so noise around zero
+  can't fire spurious crossings.
 - Survives USB disconnects: it reopens the port and resumes for up to
   `RECONNECT_TIMEOUT_S`, repeating a per-connect warmup so the reported rate is
   not polluted by post-reconnect buffer backlogs.
@@ -56,6 +60,9 @@ verifies, reports live RMS voltage, and records the stream to CSV and/or WAV.
   a 16-bit PCM mono WAV (centered at 0, scaled by the expected ±339400 mV peak
   range). The WAV sample rate is *learned* from the measured effective rate, so
   playback runs at real time even if the true rate differs from the target.
+- Split into small modules under `host/powerline_host/`: `protocol` (frame
+  format), `link` (transport + reconnect), `meters` (Vrms, frequency, rate),
+  `writers` (CSV/WAV), `session` (capture loop), `cli` (argument wiring).
 
 ## Wire protocol (little-endian, one frame per DMA conversion block)
 
@@ -109,16 +116,16 @@ tolerable, but None/UART0 is the clean choice.)
 pip install pyserial
 
 # just verify the stream (prints live + overall RMS mains voltage)
-python pc_reader.py /dev/ttyACM0
+python host/pc_reader.py /dev/ttyACM0
 
 # record to CSV
-python pc_reader.py /dev/ttyACM0 capture.csv
+python host/pc_reader.py /dev/ttyACM0 capture.csv
 
 # record to WAV
-python pc_reader.py /dev/ttyACM0 --wav capture.wav
+python host/pc_reader.py /dev/ttyACM0 --wav capture.wav
 
 # both
-python pc_reader.py /dev/ttyACM0 capture.csv --wav capture.wav
+python host/pc_reader.py /dev/ttyACM0 capture.csv --wav capture.wav
 ```
 
 On Windows the port looks like `COM7`; on Linux/macOS like `/dev/ttyACM0`.
@@ -133,7 +140,8 @@ src/board_config.h            ADC pin/rate/buffer-size knobs
 src/adc_setup.h, adc_setup.c  ADC continuous-mode setup, calibration, raw->mV parsing, ISRs
 src/mains_filter.h            ADC millivolts -> reconstructed instantaneous mains millivolts
 src/wire_protocol.h           USB frame format (header packing)
-pc_reader.py                  PC-side reader / verifier / recorder / live Vrms
+host/pc_reader.py             PC-side reader entry point
+host/powerline_host/          Reader implementation (protocol, link, meters, writers, session, cli)
 platformio.ini                PlatformIO project config (Seeed XIAO ESP32-C3, ESP-IDF)
 docs/main_c_commentary.md     Full firmware walkthrough
 docs/calibration_history.md   Empirical gain-calibration trial log
