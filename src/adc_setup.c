@@ -104,11 +104,12 @@ esp_err_t adc_setup_start(TaskHandle_t notify_task,
     };
 
     adc_continuous_config_t dig_cfg = {
+        .pattern_num = 1,
+        .adc_pattern = &pattern,
         .sample_freq_hz = SAMPLE_RATE_HZ,
         .conv_mode = ADC_CONV_SINGLE_UNIT_1,
         .format = ADC_OUTPUT_TYPE,
-        .pattern_num = 1,
-        .adc_pattern = &pattern,
+
     };
     ESP_RETURN_ON_ERROR(adc_continuous_config(handle, &dig_cfg), TAG, "config");
 
